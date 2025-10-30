@@ -1,0 +1,42 @@
+# -----------------------------
+# Required Libraries
+# -----------------------------
+from neo4j import GraphDatabase
+import pandas as pd
+
+# -----------------------------
+# Neo4j Connection
+# -----------------------------
+# Update these with your Neo4j credentials
+uri = "bolt://localhost:7687"
+username = "neo4j"
+password = "neo4j"
+
+driver = GraphDatabase.driver(uri, auth=(username, password))
+
+# -----------------------------
+# Query for Enabled Domain Admins
+# -----------------------------
+query = """
+MATCH (u:User)-[:MemberOf*1..]->(g:Group)
+WHERE toLower(g.name) = "domain admins@example.com"   // adjust domain here
+  AND u.enabled = true
+RETURN 
+    u.name AS SAMAccountName,
+    u.pwdneverexpires AS PasswordNeverExpires
+ORDER BY u.name
+"""
+
+# -----------------------------
+# Run Query and Convert to DataFrame
+# -----------------------------
+def run_query(query):
+    with driver.session() as session:
+        result = session.run(query)
+        df = pd.DataFrame([r.data() for r in result])
+    return df
+
+df = run_query(query)
+
+# Display
+df
