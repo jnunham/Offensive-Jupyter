@@ -32,7 +32,7 @@ ORDER BY HighPrivGroupMember DESC, u.name
 df_query = run_query(query)
 
 # Optional: export to CSV for further analysis
-df_query.to_csv("enabled-domain-admins.csv", index=False)
+df_query.to_csv("kerberoastable-users.csv", index=False)
 
 # Display first 50 results
 df_query.head(50)
