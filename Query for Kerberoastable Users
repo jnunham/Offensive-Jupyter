@@ -28,14 +28,11 @@ RETURN DISTINCT
 ORDER BY HighPrivGroupMember DESC, u.name
 """
 
-# -----------------------------
-# Run Query and Convert to DataFrame
-# -----------------------------
-def run_query(query):
-    with driver.session() as session:
-        result = session.run(query)
-        df = pd.DataFrame([r.data() for r in result])
-    return df
+# Run the query against your BloodHound/Neo4j instance
+df_query = run_query(query)
 
-df_kerberoast = run_query(query)
-df_kerberoast
+# Optional: export to CSV for further analysis
+df_query.to_csv("enabled-domain-admins.csv", index=False)
+
+# Display first 50 results
+df_query.head(50)
