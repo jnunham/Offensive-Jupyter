@@ -1,0 +1,13 @@
+# Query for enabled users with outbound permissions
+query_outboundperms = """
+MATCH (u:User)-[r]->(obj) WHERE u.enabled = true AND type(r) IN ['AdminTo', 'GenericAll', 'GenericWrite', 'WriteDacl', 'WriteOwner', 'AddMember', 'Owns'] RETURN u.samaccountname AS User, type(r) AS Permission, obj.name AS TargetObject, obj.objectid AS ObjectID ORDER BY User
+"""
+
+# Run the query against your BloodHound/Neo4j instance
+df_outboundperms = run_query(query_outboundperms)
+
+# Optional: export to CSV for further analysis
+df_outboundperms.to_csv("outboundperms.csv", index=False)
+
+# Display first 50 results
+df_outboundperms.head(50)
