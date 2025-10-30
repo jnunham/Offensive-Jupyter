@@ -1,0 +1,17 @@
+# -----------------------------
+# Query: Computers with Unconstrained Delegation
+# -----------------------------
+query = """
+MATCH (c:Computer)
+WHERE c.unconstraineddelegation = true
+RETURN 
+    c.name AS Computer,
+    c.operatingsystem AS OS,
+    c.domain AS Domain,
+    c.enabled AS Enabled
+ORDER BY c.name
+"""
+
+df_unconstrained = run_query(query)
+df_unconstrained.to_csv("unconstrained-computers.csv", index=False)
+df_unconstrained.head(50)
