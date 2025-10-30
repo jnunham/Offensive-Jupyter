@@ -1,0 +1,37 @@
+# -----------------------------
+# Query for Computers with Unsupported-End-of-Life OS
+# -----------------------------
+unsupported_os_query = """
+MATCH (c:Computer)
+WHERE c.operatingsystem IS NOT NULL
+AND (
+    // Desktop OS EOL
+    c.operatingsystem CONTAINS "Windows XP" OR
+    c.operatingsystem CONTAINS "Windows Vista" OR
+    c.operatingsystem CONTAINS "Windows 7" OR
+    c.operatingsystem CONTAINS "Windows 8" OR
+    c.operatingsystem CONTAINS "Windows 8.1" OR
+    
+    // Server OS EOL
+    c.operatingsystem CONTAINS "Windows Server 2003" OR
+    c.operatingsystem CONTAINS "Windows Server 2008" OR
+    c.operatingsystem CONTAINS "Windows Server 2008 R2" OR
+    c.operatingsystem CONTAINS "Windows Server 2012" OR
+    c.operatingsystem CONTAINS "Windows Server 2012 R2"
+)
+RETURN
+    c.name AS ComputerName,
+    c.operatingsystem AS OperatingSystem,
+    c.operatingsystemversion AS OSVersion,
+    c.lastlogon AS LastLogon
+ORDER BY c.name
+"""
+
+# Run the query
+df_unsupported_os = run_query(unsupported_os_query)
+
+# Optional: export to CSV
+df_unsupported_os.to_csv("unsupported-os-computers.csv", index=False)
+
+# Display first 50 results
+df_unsupported_os.head(50)
