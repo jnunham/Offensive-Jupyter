@@ -3,11 +3,12 @@
 # -----------------------------
 from neo4j import GraphDatabase
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # -----------------------------
 # Neo4j Connection
 # -----------------------------
-# Update these with your Neo4j credentials
 uri = "bolt://localhost:7687"
 username = "neo4j"
 password = "neo4j"
@@ -15,26 +16,72 @@ password = "neo4j"
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
 # -----------------------------
+# Helper Function to Run Query
+# -----------------------------
+def run_query(query):
+    with driver.session() as session:
+        result = session.run(query)
+        return pd.DataFrame([r.data() for r in result])
+
+# -----------------------------
 # Query for Enabled Domain Users
 # -----------------------------
 query = """
 MATCH (u:User)-[:MemberOf*1..]->(g:Group)
-WHERE toLower(g.name) = "domain users@example.com"   // adjust domain here
+WHERE toLower(g.name) = "domain users@example.com"  // adjust your domain
   AND u.enabled = true
 RETURN 
     u.name AS SAMAccountName,
-    u.description,
-    u.domain,
-    u.unconstraineddelegation,
+    u.description AS Description,
+    u.domain AS Domain,
+    u.unconstraineddelegation AS UnconstrainedDelegation,
     u.pwdneverexpires AS PasswordNeverExpires
 ORDER BY u.name
 """
 
-# Run the query against your BloodHound/Neo4j instance
+# -----------------------------
+# Run Query and Store Results
+# -----------------------------
 df_query = run_query(query)
 
-# Optional: export to CSV for further analysis
-df_query.to_csv("enabled-domain-users.csv", index=False)
+# -----------------------------
+# Basic Stats
+# -----------------------------
+total_users = len(df_query)
+pwd_never_expires_count = df_query['PasswordNeverExpires'].sum()
+pwd_expires_count = total_users - pwd_never_expires_count
 
-# Display first 50 results
-df_query.head(50)
+print(f"Total Enabled Users: {total_users}")
+print(f"Password Never Expires: {pwd_never_expires_count}")
+print(f"Password Expires Normally: {pwd_expires_count}")
+
+# -----------------------------
+# Prepare Data for Chart
+# -----------------------------
+chart_data = pd.DataFrame({
+    'Category': ['Password Never Expires', 'Password Expires Normally'],
+    'Count': [pwd_never_expires_count, pwd_expires_count]
+})
+
+# -----------------------------
+# Plot - Option 1: Pie Chart
+# -----------------------------
+plt.figure(figsize=(6, 6))
+plt.pie(chart_data['Count'], labels=chart_data['Category'], autopct='%1.1f%%', 
+        startangle=90, colors=['#ff9999','#66b3ff'])
+plt.title('Password Expiration Status for Domain Users')
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# Plot - Option 2: Bar Chart (Updated for Seaborn >= 0.13)
+# -----------------------------
+plt.figure(figsize=(7, 5))
+sns.barplot(x='Category', y='Count', hue='Category', data=chart_data, 
+            palette='coolwarm', legend=False)
+plt.title('Password Expiration Status for Domain Users')
+plt.ylabel('Number of Accounts')
+plt.xlabel('')
+plt.tight_layout()
+plt.show()
+
