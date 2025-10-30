@@ -1,29 +1,30 @@
 # -----------------------------
-# Query for Computers with Unsupported-End-of-Life OS
+# Dynamic Query for Unsupported/End-of-Life OS
 # -----------------------------
-unsupported_os_query = """
+# List of unsupported Windows OS strings (EOL as of 2025)
+unsupported_os_strings = [
+    "Windows XP",
+    "Windows Vista",
+    "Windows 7",
+    "Windows 8",
+    "Windows 8.1",
+    "Windows Server 2003",
+    "Windows Server 2008",
+    "Windows Server 2008 R2",
+    "Windows Server 2012",
+    "Windows Server 2012 R2"
+]
+
+# Convert list into a Neo4j OR condition
+or_conditions = " OR ".join([f'c.operatingsystem CONTAINS "{os}"' for os in unsupported_os_strings])
+
+unsupported_os_query = f"""
 MATCH (c:Computer)
 WHERE c.operatingsystem IS NOT NULL
-AND (
-    // Desktop OS EOL
-    c.operatingsystem CONTAINS "Windows XP" OR
-    c.operatingsystem CONTAINS "Windows Vista" OR
-    c.operatingsystem CONTAINS "Windows 7" OR
-    c.operatingsystem CONTAINS "Windows 8" OR
-    c.operatingsystem CONTAINS "Windows 8.1" OR
-    
-    // Server OS EOL
-    c.operatingsystem CONTAINS "Windows Server 2003" OR
-    c.operatingsystem CONTAINS "Windows Server 2008" OR
-    c.operatingsystem CONTAINS "Windows Server 2008 R2" OR
-    c.operatingsystem CONTAINS "Windows Server 2012" OR
-    c.operatingsystem CONTAINS "Windows Server 2012 R2"
-)
+AND ({or_conditions})
 RETURN
     c.name AS ComputerName,
-    c.operatingsystem AS OperatingSystem,
-    c.operatingsystemversion AS OSVersion,
-    c.lastlogon AS LastLogon
+    c.operatingsystem AS OperatingSystem
 ORDER BY c.name
 """
 
