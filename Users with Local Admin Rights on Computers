@@ -1,0 +1,16 @@
+# -----------------------------
+# Query: Users with Local Admin Rights on Computers
+# -----------------------------
+query = """
+MATCH (u:User)-[:AdminTo]->(c:Computer)
+RETURN 
+    u.name AS User,
+    c.name AS Computer,
+    c.operatingsystem AS OS,
+    c.domain AS Domain
+ORDER BY u.name
+"""
+
+df_local_admins = run_query(query)
+df_local_admins.to_csv("users-local-admins.csv", index=False)
+df_local_admins.head(50)
