@@ -1,0 +1,41 @@
+from neo4j import GraphDatabase
+import pandas as pd
+
+# -----------------------------
+# Neo4j Connection
+# -----------------------------
+uri = "bolt://localhost:7687"
+username = "neo4j"
+password = "neo4j"
+
+driver = GraphDatabase.driver(uri, auth=(username, password))
+
+# -----------------------------
+# Query for Kerberoastable Users
+# -----------------------------
+query = """
+MATCH (u:User)
+WHERE size(u.serviceprincipalnames) > 0 AND u.enabled = true
+
+OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
+WHERE toLower(g.name) IN ["domain admins@example.com", "enterprise admins@example.com", "schema admins@example.com"]
+
+RETURN DISTINCT
+    u.name AS SAMAccountName,
+    u.serviceprincipalnames AS SPNs,
+    CASE WHEN g IS NULL THEN false ELSE true END AS HighPrivGroupMember,
+    collect(DISTINCT g.name) AS HighPrivGroups
+ORDER BY HighPrivGroupMember DESC, u.name
+"""
+
+# -----------------------------
+# Run Query and Convert to DataFrame
+# -----------------------------
+def run_query(query):
+    with driver.session() as session:
+        result = session.run(query)
+        df = pd.DataFrame([r.data() for r in result])
+    return df
+
+df_kerberoast = run_query(query)
+df_kerberoast
