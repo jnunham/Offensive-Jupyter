@@ -1,5 +1,5 @@
 # -----------------------------
-# Dynamic Query for Unsupported/End-of-Life OS
+# Dynamic Query for Enabled Unsupported/End-of-Life OS
 # -----------------------------
 # List of unsupported Windows OS strings (EOL as of 2025)
 unsupported_os_strings = [
@@ -21,6 +21,7 @@ or_conditions = " OR ".join([f'c.operatingsystem CONTAINS "{os}"' for os in unsu
 unsupported_os_query = f"""
 MATCH (c:Computer)
 WHERE c.operatingsystem IS NOT NULL
+AND c.enabled = true
 AND ({or_conditions})
 RETURN
     c.name AS ComputerName,
