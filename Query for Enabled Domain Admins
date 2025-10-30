@@ -23,20 +23,19 @@ WHERE toLower(g.name) = "domain admins@example.com"   // adjust domain here
   AND u.enabled = true
 RETURN 
     u.name AS SAMAccountName,
+    u.description,
+    u.cannotbedelegated,
+    u.domain,
+    u.unconstraineddelegation,
     u.pwdneverexpires AS PasswordNeverExpires
 ORDER BY u.name
 """
 
-# -----------------------------
-# Run Query and Convert to DataFrame
-# -----------------------------
-def run_query(query):
-    with driver.session() as session:
-        result = session.run(query)
-        df = pd.DataFrame([r.data() for r in result])
-    return df
+# Run the query against your BloodHound/Neo4j instance
+df_query = run_query(query)
 
-df = run_query(query)
+# Optional: export to CSV for further analysis
+df_query.to_csv("enabled-domain-admins.csv", index=False)
 
-# Display
-df
+# Display first 50 results
+df_query.head(50)
