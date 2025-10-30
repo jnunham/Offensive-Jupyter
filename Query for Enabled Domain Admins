@@ -21,7 +21,6 @@ query = """
 MATCH (u:User)-[:MemberOf*1..]->(g:Group)
 WHERE toLower(g.name) = "domain admins@example.com"   // adjust domain here
   AND u.enabled = true
-  AND u.pwdneverexpires = true
 RETURN 
     u.name AS SAMAccountName,
     u.pwdneverexpires AS PasswordNeverExpires
