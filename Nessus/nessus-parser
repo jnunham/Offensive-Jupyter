@@ -1,0 +1,223 @@
+# 🛡️ Nessus Executive Summary (Unique Host Counts, Refined Categories)
+
+!pip install defusedxml pandas packaging
+
+import re
+import pandas as pd
+from defusedxml import ElementTree as ET
+from collections import Counter, defaultdict
+
+# -------------------------------------------------------------------
+# 1️⃣ Parse Nessus XML into DataFrame
+# -------------------------------------------------------------------
+def parse_nessus(nessus_file):
+    tree = ET.parse(nessus_file)
+    root = tree.getroot()
+    rows = []
+    for host in root.findall(".//ReportHost"):
+        host_name = host.get("name")
+        host_ip = None
+        for tag in host.findall(".//HostProperties/tag"):
+            if tag.get("name") in ("host-ip","host-ipv4","host"):
+                host_ip = tag.text
+        for item in host.findall("ReportItem"):
+            plugin_id = item.get("pluginID")
+            plugin_name = item.get("pluginName")
+            severity = int(item.get("severity") or 0)
+            port = item.get("port")
+            svc_name = item.get("svc_name") or ''
+            protocol = item.get("protocol") or ''
+            desc = item.findtext("description") or ''
+            plugin_output = item.findtext("plugin_output") or ''
+            solution = item.findtext("solution") or ''
+            cvss = item.findtext("cvss_base_score")
+            if cvss:
+                try:
+                    cvss = float(cvss)
+                except:
+                    cvss = None
+
+            cves = re.findall(r'CVE-\d{4}-\d{4,7}', desc + ' ' + plugin_output)
+            rows.append({
+                "host": host_name,
+                "host_ip": host_ip,
+                "plugin_id": plugin_id,
+                "plugin_name": plugin_name,
+                "severity": severity,
+                "cvss": cvss,
+                "port": port,
+                "svc_name": svc_name,
+                "protocol": protocol,
+                "description": desc,
+                "plugin_output": plugin_output,
+                "solution": solution,
+                "cves": cves
+            })
+    return pd.DataFrame(rows)
+
+# -------------------------------------------------------------------
+# 2️⃣ Filter actionable vulnerabilities
+# -------------------------------------------------------------------
+NOISE_PLUGINS = [
+    "Nessus Scan Information", "SYN Scan", "TCP Null Scan", 
+    "TCP FIN Scan", "TCP Xmas Scan", "Ping", "Traceroute"
+]
+
+def filter_actionable(df):
+    actionable_df = df[~df['plugin_name'].isin(NOISE_PLUGINS)]
+    actionable_df = actionable_df[(actionable_df['severity'] >= 2) | (df['cvss'].fillna(0) >= 4)]
+    return actionable_df
+
+# -------------------------------------------------------------------
+# 3️⃣ Triage by severity
+# -------------------------------------------------------------------
+def triage(df):
+    critical = df[(df["severity"]==4) | (df["cvss"]>=9)]
+    high = df[(df["severity"]==3) | ((df["cvss"]>=7) & (df["cvss"]<9))]
+    medium = df[(df["severity"]==2) | ((df["cvss"]>=4) & (df["cvss"]<7))]
+    return critical, high, medium
+
+# -------------------------------------------------------------------
+# 4️⃣ Categorize vulnerabilities (refined categories)
+# -------------------------------------------------------------------
+CATEGORY_KEYWORDS = {
+    "System Patching & Maintenance": ["outdated","version","patch","update","windows","ubuntu","linux","oracle","java"],
+    "Application Vulnerabilities": ["apache","nginx","iis","tomcat","php","web","wordpress","http","https"],
+    "Configuration & Hardening": ["cipher","config","misconfig","weak","insecure","default","ssl","tls"],
+    "Authentication & Access Control": [
+        "default-password", "unauthorized-access", "privilege-escalation", "weak-credential", "account-lockout", "ssh-weak-key"
+    ],
+    "Network Exposure & Services": ["telnet","snmp","icmp","rdp","vpn","ftp","service","exposed"]
+}
+
+def categorize_item(plugin_name, plugin_output):
+    categories = set()
+    text = (plugin_name + " " + plugin_output).lower()
+    for cat, keywords in CATEGORY_KEYWORDS.items():
+        for kw in keywords:
+            if kw in text:
+                categories.add(cat)
+    if not categories:
+        categories.add("Other")
+    return categories
+
+def categorize_vulnerabilities(df):
+    df["categories"] = df.apply(lambda row: categorize_item(row["plugin_name"], row["plugin_output"]), axis=1)
+    cat_hosts = defaultdict(set)
+
+    for _, row in df.iterrows():
+        # Skip low severity or informational
+        if (row["severity"] < 3) and (not row["cvss"] or row["cvss"] < 7):
+            continue
+        # Skip benign SSL/certificate-only
+        if re.search(r"ssl|tls|self[- ]?signed|certificate", row["plugin_name"].lower()) and row["severity"] < 3:
+            continue
+        for c in row["categories"]:
+            cat_hosts[c].add(row["host_ip"] or row["host"])
+
+    # Count unique hosts per category
+    cat_counter = {cat: len(hosts) for cat, hosts in cat_hosts.items()}
+    return df, cat_counter, cat_hosts
+
+# -------------------------------------------------------------------
+# 5️⃣ Generate actionable patterns (unique host count)
+# -------------------------------------------------------------------
+SOFTWARE_WHITELIST = [
+    "apache", "nginx", "iis", "tomcat", "mysql", "mariadb", "postgresql",
+    "windows", "ubuntu", "centos", "redhat", "oracle", "java", "openssl",
+    "python", "php", "ruby", "nodejs", "docker", "jenkins", "exchange"
+]
+
+def extract_software(plugin_name):
+    software_found = []
+    for sw in SOFTWARE_WHITELIST:
+        if sw in plugin_name.lower():
+            software_found.append(sw)
+    return software_found
+
+def generate_actionable_patterns(df):
+    software_hosts = defaultdict(set)
+    cve_hosts = defaultdict(set)
+
+    for _, row in df.iterrows():
+        host = row["host_ip"] or row["host"]
+        for s in extract_software(row["plugin_name"]):
+            software_hosts[s].add(host)
+        for c in row["cves"]:
+            cve_hosts[c].add(host)
+
+    patterns = []
+    for s, hosts in software_hosts.items():
+        if len(hosts) > 1:
+            patterns.append(f"{len(hosts)} hosts affected by {s} → patch management issue ({', '.join(list(hosts)[:3])})")
+    for c, hosts in cve_hosts.items():
+        if len(hosts) > 1:
+            patterns.append(f"{len(hosts)} hosts affected by {c} → recurring CVE ({', '.join(list(hosts)[:3])})")
+
+    return patterns
+
+# -------------------------------------------------------------------
+# 6️⃣ Generate Executive Summary Markdown
+# -------------------------------------------------------------------
+def generate_exec_summary_md(df, nessus_file):
+    actionable_df = filter_actionable(df)
+    critical, high, medium = triage(actionable_df)
+    actionable_df, cat_counter, cat_hosts = categorize_vulnerabilities(actionable_df)
+
+    # Top vulnerable hosts by critical/high counts
+    host_sev = actionable_df.groupby("host")["severity"].apply(lambda x: sum(x>=3))
+    top_hosts = host_sev.sort_values(ascending=False).head(10)
+
+    # Determine overall risk
+    total_critical = len(critical)
+    total_high = len(high)
+    if total_critical > 5:
+        overall_risk = "High"
+    elif total_high > 10:
+        overall_risk = "Medium"
+    else:
+        overall_risk = "Low"
+
+    lines = [f"# Nessus Scan Executive Summary: {nessus_file}\n"]
+    lines.append(f"Total actionable vulnerabilities: {len(actionable_df)}")
+    lines.append(f"Overall Risk Rating: **{overall_risk}**\n")
+
+    if not top_hosts.empty:
+        lines.append("Hosts with most critical/high issues:")
+        for host,count in top_hosts.items():
+            lines.append(f"- {host}: {count} findings")
+
+    # Major categories — unique hosts only
+    lines.append("\n## Major Risk Categories")
+    for cat, count in sorted(cat_counter.items(), key=lambda x: x[1], reverse=True):
+        example_hosts = list(cat_hosts[cat])[:3]
+        lines.append(f"- **{cat}**: {count} affected hosts (examples: {', '.join(example_hosts)})")
+
+    # Recurring actionable software / CVEs
+    lines.append("\n## Recurring Actionable Findings")
+    patterns = generate_actionable_patterns(actionable_df)
+    if patterns:
+        for p in patterns:
+            lines.append(f"- {p}")
+    else:
+        lines.append("No recurring patterns identified.")
+
+    # Summary paragraph
+    lines.append("\n## Summary")
+    lines.append(f"This scan identified {total_critical} critical and {total_high} high severity vulnerabilities across {actionable_df['host'].nunique()} hosts. Focus remediation on the systems with the most critical/high issues and recurring software vulnerabilities. Key areas of concern include {', '.join(cat_counter.keys())}.")
+
+    return "\n".join(lines)
+
+# -------------------------------------------------------------------
+# 7️⃣ Main Execution
+# -------------------------------------------------------------------
+NESSUS_FILE = "example.nessus"  # <-- replace with your Nessus scan
+df = parse_nessus(NESSUS_FILE)
+exec_md = generate_exec_summary_md(df, NESSUS_FILE)
+
+# Save to Markdown
+with open("executive_summary.md", "w", encoding="utf-8") as f:
+    f.write(exec_md)
+
+print("✅ Executive summary saved as executive_summary.md")
+print(exec_md)
