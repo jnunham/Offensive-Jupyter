@@ -3,11 +3,13 @@
 # -----------------------------
 from neo4j import GraphDatabase
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timezone
 
 # -----------------------------
 # Neo4j Connection
 # -----------------------------
-# Update these with your Neo4j credentials
 uri = "bolt://localhost:7687"
 username = "neo4j"
 password = "neo4j"
@@ -15,27 +17,127 @@ password = "neo4j"
 driver = GraphDatabase.driver(uri, auth=(username, password))
 
 # -----------------------------
-# Query for Enabled Domain Admins
+# Helper Function to Run Query
+# -----------------------------
+def run_query(query):
+    with driver.session() as session:
+        result = session.run(query)
+        return pd.DataFrame([r.data() for r in result])
+
+# -----------------------------
+# Query: All Users + Privileged Group Check
 # -----------------------------
 query = """
-MATCH (u:User)-[:MemberOf*1..]->(g:Group)
-WHERE toLower(g.name) = "domain admins@example.com"   // adjust domain here
-  AND u.enabled = true
-RETURN 
+MATCH (u:User)
+WHERE u.enabled = true
+
+OPTIONAL MATCH (u)-[:MemberOf*1..]->(g:Group)
+WHERE toLower(g.name) IN [
+  "domain admins@example.com",
+  "enterprise admins@example.com"",
+  "schema admins@example.com"",
+  "administrators@example.com"",
+  "backup operators@example.com"",
+  "account operators@example.com"",
+  "server operators@example.com""
+]
+
+RETURN DISTINCT
     u.name AS SAMAccountName,
-    u.description,
-    u.cannotbedelegated,
-    u.domain,
-    u.unconstraineddelegation,
-    u.pwdneverexpires AS PasswordNeverExpires
-ORDER BY u.name
+    u.domain AS Domain,
+    u.description AS Description,
+    u.pwdlastset AS PasswordLastSet,
+    u.pwdneverexpires AS PasswordNeverExpires,
+    CASE WHEN g IS NULL THEN false ELSE true END AS IsPrivileged,
+    collect(DISTINCT g.name) AS PrivilegedGroups
+ORDER BY PasswordNeverExpires DESC, IsPrivileged DESC, u.name
 """
 
-# Run the query against your BloodHound/Neo4j instance
+# -----------------------------
+# Run Query
+# -----------------------------
 df_query = run_query(query)
 
-# Optional: export to CSV for further analysis
-df_query.to_csv("enabled-domain-admins.csv", index=False)
+# -----------------------------
+# Convert PasswordLastSet to readable date
+# -----------------------------
+def convert_pwdlastset(ts):
+    if ts in (None, 0, "0", ""):
+        return None
+    try:
+        ts = float(ts)
+        # Handle both Windows FILETIME and Unix epoch values
+        if ts > 1e12:  # FILETIME (100-ns intervals since 1601)
+            ts = ts / 1e7 - 11644473600
+        return datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%m/%d/%Y')
+    except Exception:
+        return None
 
-# Display first 50 results
-df_query.head(50)
+df_query['PasswordLastSet'] = df_query['PasswordLastSet'].apply(convert_pwdlastset)
+
+# -----------------------------
+# Export Results to CSV
+# -----------------------------
+output_csv = "all_users_pw_never_expires_check.csv"
+df_query.to_csv(output_csv, index=False)
+print(f"\n✅ Exported data to: {output_csv}\n")
+
+# -----------------------------
+# Basic Stats
+# -----------------------------
+total_users = len(df_query)
+pwd_never_expires_count = df_query['PasswordNeverExpires'].sum()
+pwd_expires_count = total_users - pwd_never_expires_count
+
+# Accurate Privileged vs Non-Privileged Counts
+priv_pw_never = len(df_query[(df_query['IsPrivileged'] == True) & (df_query['PasswordNeverExpires'] == True)])
+priv_pw_expires = len(df_query[(df_query['IsPrivileged'] == True) & (df_query['PasswordNeverExpires'] == False)])
+nonpriv_pw_never = len(df_query[(df_query['IsPrivileged'] == False) & (df_query['PasswordNeverExpires'] == True)])
+nonpriv_pw_expires = len(df_query[(df_query['IsPrivileged'] == False) & (df_query['PasswordNeverExpires'] == False)])
+
+print(f"Total Enabled Users: {total_users}")
+print(f"Password Never Expires: {pwd_never_expires_count}")
+print(f"Password Expires Normally: {pwd_expires_count}")
+print(f"Privileged Users w/ Password Never Expires: {priv_pw_never}")
+print(f"Privileged Users w/ Normal Expiration: {priv_pw_expires}\n")
+
+# -----------------------------
+# Chart DataFrames
+# -----------------------------
+chart_data_pw = pd.DataFrame({
+    'Category': ['Password Never Expires', 'Password Expires Normally'],
+    'Count': [pwd_never_expires_count, pwd_expires_count]
+})
+
+chart_data_priv = pd.DataFrame({
+    'Category': [
+        'Privileged - PW Never Expires',
+        'Privileged - PW Expires',
+        'Non-Privileged - PW Never Expires',
+        'Non-Privileged - PW Expires'
+    ],
+    'Count': [priv_pw_never, priv_pw_expires, nonpriv_pw_never, nonpriv_pw_expires]
+})
+
+# -----------------------------
+# Plot 1 - Password Expiration Overview
+# -----------------------------
+plt.figure(figsize=(6, 6))
+plt.pie(chart_data_pw['Count'], labels=chart_data_pw['Category'], autopct='%1.1f%%',
+        startangle=90, colors=['#ff9999', '#66b3ff'])
+plt.title('Password Expiration Status for All Enabled Users')
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# Plot 2 - Privileged vs Non-Privileged Breakdown
+# -----------------------------
+plt.figure(figsize=(9, 6))
+sns.barplot(x='Category', y='Count', hue='Category', data=chart_data_priv,
+            palette='coolwarm', legend=False)
+plt.title('Privileged vs Non-Privileged Password Expiration Status')
+plt.ylabel('Number of Accounts')
+plt.xlabel('')
+plt.xticks(rotation=25, ha='right')
+plt.tight_layout()
+plt.show()
